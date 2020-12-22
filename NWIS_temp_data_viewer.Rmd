@@ -1,0 +1,178 @@
+---
+title: "DRAFT Idaho DEQ - External Water Temperature Data Dashboard"
+output: 
+  flexdashboard::flex_dashboard:
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+
+library(flexdashboard)
+library(leaflet)
+library(leaflet.esri)
+library(dplyr)
+
+source("./preps_data_for_dashboard.R")
+
+```
+
+
+Select A Site & Plot Data
+=======================================================================
+
+Inputs {.sidebar}
+-----------------------------------------------------------------------
+### 
+
+```{r}
+selectInput("plot_title", label = h4("Select A Site"), selectize = TRUE,
+            choices = levels(unique(as.factor(tempdata_for_dashboard$plot_title))))
+
+```
+
+USGS & IDFG Data (2016-present)
+
+Use the map to browse sites and identify site names of interest.
+
+Select a site from the dropdown menu to view daily average and daily maximum temperature data. 
+
+In the 'Data Table' tab, view data for the selected site in tabular form.
+
+Hover over a stream line to view the stream assessment unit (AU) #.
+
+Click on a stream line to view AU status in Idaho's 2018/2020 Integrated Report.
+
+
+Column
+-----------------------------------------------------------------------
+
+### Sites With Temperature Data
+
+```{r}
+groupColors = colorFactor(c("navy", "steelblue"), domain = levels(unique(as.factor(sites_for_dashboard$source))))
+
+sitesmap <-
+  leaflet(sites_for_dashboard) %>%
+  addProviderTiles("Esri.WorldTopoMap") %>%
+  
+  # USGS sites with data
+  addCircleMarkers(lng = ~dec_long_va, lat = ~dec_lat_va,
+             popup = ~paste(site_no, station_nm, sep = " - "),
+             color = ~groupColors(source), group = ~source,
+             fillOpacity = 0.7) %>%
+  
+    # streams 2018/2020 IR
+    addEsriFeatureLayer(url = "https://mapcase.deq.idaho.gov/arcgis/rest/services/ID305B_2020_WMS/MapServer/14", 
+                        weight = 1.5, fill = FALSE, labelProperty = "ENTITY_ID", 
+                        labelOptions = labelOptions(textsize = "12px"), popupProperty = "DATALINK",
+                        group = "streams") %>%
+  
+    # lakes 2018/2020 IR
+    addEsriFeatureLayer(url = "https://mapcase.deq.idaho.gov/arcgis/rest/services/ID305B_2020_WMS/MapServer/8", 
+                        weight = 1.5, fill = FALSE, labelProperty = "ENTITY_ID", 
+                        labelOptions = labelOptions(textsize = "12px"), popupProperty = "DATALINK",
+                        group = "lakes") %>%
+  
+  
+  addLayersControl(overlayGroups = ~source) %>%
+  addLegend(pal = groupColors, values = levels(unique(as.factor(sites_for_dashboard$source))), 
+                                               opacity = 1)
+sitesmap
+```
+
+### Site Data
+
+```{r}
+
+selected_data <-reactive({
+  tempdata_for_dashboard %>%
+  filter(plot_title == input$plot_title)
+})
+
+  
+renderPlot({
+  selected_data() %>%
+    ggplot(aes(x = as.Date(dateTime, format = "%Y-%m-%d"))) +
+    geom_line(aes(y = daily_mean, color = "daily ave")) +
+    geom_line(aes(y = daily_max, color = "daily max")) +
+    theme(legend.title = element_blank()) +
+    ylab("Temperature C") +
+    scale_x_date(date_labels = "%b-%Y") +
+    theme(axis.title.x = element_blank()) +
+    scale_y_continuous(limits = c(0, 30), breaks = c(0, 10, 20, 30), minor_breaks=c(9, 13, 19, 22)) +
+    theme_bw() +
+    ggtitle(input$plot_title) +
+    theme(axis.title.x = element_blank()) +
+    theme(legend.title = element_blank())
+})
+
+```
+
+Data Table - Selected Data
+=======================================================================================
+```{r}
+renderTable({
+  selected_data() %>%
+  mutate(Date = as.character(dateTime)) %>% #renderTable/xtable doesn't handle class Date well
+  select(plot_title, Date, daily_mean, daily_max) %>%
+  rename(site = plot_title)
+})
+```
+
+Download Selected Data
+=======================================================================================
+
+### Copy/Paste the link into a browser to download data
+```{r}
+
+selected_site <-reactive({
+  tempdata_for_dashboard %>%
+  filter(plot_title == input$plot_title) %>%
+  distinct(site_no)
+})
+
+
+reactive({
+ifelse(grepl("IIDFG", selected_site()),
+             paste("https://www.waterqualitydata.us/data/Result/search?siteid=", as.character(selected_site()),
+                   "&startDateLo=01-01-2014&mimeType=csv&zip=no", sep = ""), 
+             paste("http://waterservices.usgs.gov/nwis/dv/?format=excel&sites=",
+                   as.character(selected_site()), "&startDT=2014-01-01&siteStatus=all", sep = ""))
+                  
+})
+
+```
+
+About This Dashboard
+=========================================================================================
+#### DRAFT Idaho DEQ - External Water Temperature Data Dashboard
+#### Created by Jason Williams, Idaho DEQ Lewiston Regional Office
+#### jason.williams@deq.idaho.gov
+#### Last updated: 12/21/2020
+
+This application displays site locations and data for 2016-present U.S. Geological Survey (USGS) and 
+Idaho Department of Fish and Game (IDFG) temperature monitoring sites in Idaho. USGS data
+are retrieved using NWIS web services using the R package 'dataRetrieval' and are dynamic; 
+USGS data are updated each time the application is loaded. IDFG were retrieved from 
+Water Quality Portal (www.waterqualitydata.us), but are static. The dashboard was created using the R package 'flexdashboard'. 
+
+Source code is available on github: https://github.com/jjwill2/external_temp_dashboard
+
+Temperature plots include horizontal gridlines for temperature criteria in Idaho 
+water quality standards. 
+
+-Cold water aquatic life: 22 C maximum, 19 C daily average 
+
+-Salmonid Spawning: 13 C daily max, 9 C daily average 
+
+These criteria do not necessarily apply to all sites or at all times, so values exceeding these thresholds may not indicate a violation of Idaho's water quality standards. [Idaho's Water Body Guidance (3rd edition)](https://www.deq.idaho.gov/media/60179244/water-body-assessment-guidance.pdf) 
+describes methods for assessing the quality and useability of external data, applying Idaho temperature criteria, including how to determine where and when temperature criteria may apply. DEQ publishes its determination of whether or not  water bodies meet state water quality standards in Idaho's bi-annual [Integrated Report](http://www.deq.idaho.gov/water-quality/surface-water/monitoring-assessment/integrated-report.aspx). DEQ considers all relevant readily available data, not just temperature data, when 
+making such determinations. The public can comment on DEQ's assessment decisions during the Integrated Report public comment period. 
+
+#### Disclaimer 
+This application uses publically-available USGS data and R tools. DEQ published
+the application 'as-is', and no warranty expressed or implied, is made by DEQ as
+to the accuracy and functioning of the application and related material. Nor shall
+the fact of distribution constitute any such warranty, and no responsibility is assumed
+by DEQ in connection therewith. The application is published solely for the purpose
+of viewing available data.
